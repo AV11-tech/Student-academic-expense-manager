@@ -51,9 +51,32 @@ body {
 }
 .chat-msg {
   margin-bottom: 8px;
+  padding: 8px;
+  border-radius: 5px;
 }
-.chat-teacher { font-weight: bold; color: #2563eb; }
-.chat-student { font-weight: bold; color: #16a34a; }
+.chat-teacher { 
+  font-weight: bold; 
+  color: #2563eb;
+  background: #f0f4ff;
+  padding: 8px;
+  border-radius: 5px;
+}
+.chat-student { 
+  font-weight: bold; 
+  color: #16a34a;
+  background: #f0fff4;
+  padding: 8px;
+  border-radius: 5px;
+}
+.chat-sent {
+  text-align: right;
+  background: #e0f2fe;
+}
+.refresh-status {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
 </style>
 </head>
 
@@ -64,6 +87,7 @@ body {
   <h4>👩‍🏫 Teacher Panel</h4>
   <a onclick="showSection('attendance')">📅 Attendance</a>
   <a onclick="showSection('marks')">📊 Subjects & Marks</a>
+  <a onclick="showSection('courses')">📚 Courses</a>
   <a onclick="showSection('assignments')">📝 Assignments</a>
   <a onclick="showSection('grading')">✅ Assignment Grading</a>
   <a onclick="showSection('messages')">💬 Messages</a>
@@ -78,6 +102,17 @@ body {
   <span class="badge bg-dark">Teacher</span>
 </h3>
 <hr>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 
 <!-- ATTENDANCE -->
 <div id="attendance">
@@ -136,6 +171,46 @@ body {
 </div>
 </div>
 
+<!-- COURSES -->
+<div id="courses" class="hidden">
+<div class="card">
+  <div class="card-header"><strong>Add Course</strong></div>
+  <div class="card-body">
+    <form method="POST" action="/add-course" class="row g-2">
+      <div class="col-md-6">
+        <input name="name" class="form-control" placeholder="Course Name" required>
+      </div>
+      <div class="col-md-4">
+        <input name="code" class="form-control" placeholder="Course Code (Optional)">
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-success w-100">Add</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Posted Courses</strong></div>
+  <div class="card-body">
+    {% if courses %}
+      <table class="table table-bordered">
+        <tr><th>Course Name</th><th>Course Code</th><th>Posted By</th></tr>
+        {% for c in courses %}
+        <tr>
+          <td>{{ c.name }}</td>
+          <td>{{ c.code if c.code else '—' }}</td>
+          <td>Teacher (ID: {{ c.teacher_id }})</td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p>No courses added yet.</p>
+    {% endif %}
+  </div>
+</div>
+</div>
+
 <!-- ASSIGNMENTS -->
 <div id="assignments" class="hidden">
 <div class="card">
@@ -145,11 +220,6 @@ body {
       <input name="title" class="form-control mb-2" placeholder="Title" required>
       <input name="subject" class="form-control mb-2" placeholder="Subject" required>
       <input type="date" name="deadline" class="form-control mb-2" required>
-      <select name="student_id" class="form-control mb-2" required>
-        {% for s in students %}
-          <option value="{{ s.id }}">{{ s.username }}</option>
-        {% endfor %}
-      </select>
       <input type="file" name="file" class="form-control mb-2">
       <button class="btn btn-primary">Post Assignment</button>
     </form>
@@ -162,13 +232,13 @@ body {
 <div class="card">
   <div class="card-header"><strong>Assignment Submissions</strong></div>
   <div class="card-body">
-    {% for sub in submissions %}
+    {% for submission, student_name, assignment_title in submissions %}
       <div class="border p-3 mb-2">
-        <strong>{{ sub.student_name }}</strong> — {{ sub.assignment_title }}<br>
-        <a href="{{ url_for('static', filename='uploads/' ~ sub.file) }}" target="_blank">View Submission</a>
+        <strong>{{ student_name }}</strong> — {{ assignment_title }}<br>
+        <a href="{{ url_for('static', filename='uploads/' ~ submission.file) }}" target="_blank">View Submission</a>
 
         <form method="POST" action="/grade-assignment" class="row g-2 mt-2">
-          <input type="hidden" name="submission_id" value="{{ sub.id }}">
+          <input type="hidden" name="submission_id" value="{{ submission.id }}">
           <div class="col-md-3">
             <input type="number" name="marks" class="form-control" placeholder="Marks" required>
           </div>
@@ -193,27 +263,29 @@ body {
   <div class="card-header"><strong>Student Messages</strong></div>
   <div class="card-body">
 
-    <div class="chat-box mb-2">
-      {% for m in messages %}
-        <div class="chat-msg">
-          <span class="{{ 'chat-student' if m.sender_role == 'student' else 'chat-teacher' }}">
-            {{ m.sender_name }}:
+    <div id="chat-box" class="chat-box mb-2">
+      {% for m, sender_name, sender_role in messages %}
+        <div class="chat-msg {% if m.sender_id == current_user_id %}chat-sent{% endif %}">
+          <span class="{{ 'chat-student' if sender_role == 'student' else 'chat-teacher' }}">
+            {{ sender_name }}:
           </span>
-          {{ m.message }}
+          {{ m.text }}
         </div>
       {% else %}
         <p class="text-muted">No messages yet.</p>
       {% endfor %}
     </div>
+    <div class="refresh-status">Auto-refreshing every 5 seconds...</div>
 
-    <form method="POST" action="/send-message">
-      <select name="student_id" class="form-control mb-2" required>
+    <form id="message-form" onsubmit="sendMessage(event)">
+      <select name="receiver_id" id="receiver_id" class="form-control mb-2" required>
+        <option value="" selected disabled>Select Student</option>
         {% for s in students %}
           <option value="{{ s.id }}">{{ s.username }}</option>
         {% endfor %}
       </select>
       <textarea name="message" class="form-control mb-2" placeholder="Reply..." required></textarea>
-      <button class="btn btn-primary">Send</button>
+      <button type="submit" class="btn btn-primary">Send</button>
     </form>
 
   </div>
@@ -298,6 +370,8 @@ body {
 </div>
 
 <script>
+const current_user_id = {{ current_user_id }};
+
 function showSection(id) {
   // hide all sections
   document.querySelectorAll('.main > div[id]').forEach(div => {
@@ -311,13 +385,95 @@ function showSection(id) {
   window.location.hash = id;
 }
 
+// Send message via AJAX
+function sendMessage(event) {
+  event.preventDefault();
+  const form = document.getElementById('message-form');
+  const receiverId = document.getElementById('receiver_id').value;
+  
+  // Validate receiver_id
+  if (!receiverId || receiverId === '') {
+    alert('Please select a student to send the message to.');
+    return;
+  }
+  
+  // Validate current_user_id doesn't match receiver_id
+  if (parseInt(receiverId) === current_user_id) {
+    alert('You cannot send a message to yourself.');
+    return;
+  }
+  
+  const formData = new FormData(form);
+  
+  fetch('/send-message', {
+    method: 'POST',
+    body: formData
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      form.reset();
+      refreshMessages(); // Refresh messages immediately after sending
+    }
+  })
+  .catch(err => console.log('Error sending message:', err));
+}
+
+// Auto-refresh messages every 5 seconds
+function refreshMessages() {
+  fetch('/api/messages')
+    .then(response => response.json())
+    .then(messages => {
+      const chatBox = document.getElementById('chat-box');
+      if (!chatBox) return;
+      
+      // Build HTML for messages
+      let html = '';
+      if (messages.length === 0) {
+        html = '<p class="text-muted">No messages yet.</p>';
+      } else {
+        messages.forEach(msg => {
+          const senderClass = msg.sender_role === 'student' ? 'chat-student' : 'chat-teacher';
+          const sentClass = msg.is_sent ? 'chat-sent' : '';
+          html += `<div class="chat-msg ${sentClass}">
+            <span class="${senderClass}">${msg.sender_name}:</span>
+            ${msg.text}
+          </div>`;
+        });
+      }
+      
+      chatBox.innerHTML = html;
+      // Auto-scroll to bottom
+      chatBox.scrollTop = chatBox.scrollHeight;
+    })
+    .catch(err => console.log('Error refreshing messages:', err));
+}
+
 // when page reloads, open correct section
 window.onload = function () {
   const section = window.location.hash.replace('#', '') || 'attendance';
   showSection(section);
+  
+  // Set interval for auto-refresh
+  setInterval(function() {
+    if (!document.getElementById('messages').classList.contains('hidden')) {
+      refreshMessages();
+    }
+  }, 5000);
+};
+
+// Store original showSection for wrapping
+const originalShowSection = showSection;
+// Override to refresh messages when switching to messages section
+window.showSection = function(id) {
+  originalShowSection(id);
+  if (id === 'messages') {
+    refreshMessages(); // Refresh immediately when switching to messages
+  }
 };
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
 </html>

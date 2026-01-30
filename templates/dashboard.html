@@ -61,6 +61,47 @@ body {
 .hidden {
   display: none;
 }
+
+.chat-box {
+  height: 300px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  padding: 10px;
+  background: #fff;
+}
+
+.chat-msg {
+  margin-bottom: 8px;
+  padding: 8px;
+  border-radius: 5px;
+}
+
+.chat-teacher {
+  font-weight: bold;
+  color: #2563eb;
+  background: #f0f4ff;
+  padding: 8px;
+  border-radius: 5px;
+}
+
+.chat-student {
+  font-weight: bold;
+  color: #16a34a;
+  background: #f0fff4;
+  padding: 8px;
+  border-radius: 5px;
+}
+
+.chat-sent {
+  text-align: right;
+  background: #e0f2fe;
+}
+
+.refresh-status {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
 </style>
 </head>
 
@@ -159,9 +200,22 @@ body {
 <!-- ================= COURSES ================= -->
 <div id="courses" class="hidden">
   <div class="card">
-    <div class="card-header"><strong>Courses</strong></div>
+    <div class="card-header"><strong>Available Courses</strong></div>
     <div class="card-body">
-      <p>No courses assigned yet.</p>
+      {% if courses %}
+        <table class="table table-bordered">
+          <tr><th>Course Name</th><th>Course Code</th><th>Teacher</th></tr>
+          {% for c in courses %}
+          <tr>
+            <td>{{ c.name }}</td>
+            <td>{{ c.code if c.code else '—' }}</td>
+            <td>Teacher ID: {{ c.teacher_id }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <p>No courses available yet.</p>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -232,8 +286,12 @@ body {
     <div class="card-header"><strong>Submit Assignment</strong></div>
     <div class="card-body">
       <form method="POST" action="/submit-assignment" enctype="multipart/form-data">
-        <input class="form-control mb-2" name="title" placeholder="Title" required>
-        <input class="form-control mb-2" name="subject" placeholder="Subject" required>
+        <select name="assignment_id" class="form-control mb-2" required>
+          <option value="">Select Assignment</option>
+          {% for a in assignments %}
+            <option value="{{ a.id }}">{{ a.title }} ({{ a.subject }})</option>
+          {% endfor %}
+        </select>
         <input type="file" class="form-control mb-2" name="file" required>
         <button class="btn btn-success">Submit</button>
       </form>
@@ -243,11 +301,19 @@ body {
   <div class="card">
     <div class="card-header"><strong>My Submissions</strong></div>
     <div class="card-body">
-      {% for a in assignments %}
+      {% for submission, assignment_title, assignment_subject in submissions %}
         <p>
-          <strong>{{ a.title }}</strong> ({{ a.subject }})<br>
-          {{ a.submitted_on }} |
-          <a href="{{ url_for('static', filename='uploads/' ~ a.filename) }}" target="_blank">View</a>
+          <strong>{{ assignment_title }}</strong> ({{ assignment_subject }})<br>
+          Submitted on: {{ submission.submitted_on }} |
+          {% if submission.file %}
+            <a href="{{ url_for('static', filename='uploads/' ~ submission.file) }}" target="_blank">View Submission</a>
+          {% endif %}
+          {% if submission.marks %}
+            | Marks: {{ submission.marks }}
+          {% endif %}
+          {% if submission.remarks %}
+            | Remarks: {{ submission.remarks }}
+          {% endif %}
         </p>
         <hr>
       {% else %}
@@ -274,7 +340,18 @@ body {
   <div class="card">
     <div class="card-header"><strong>Fees & Payments</strong></div>
     <div class="card-body">
-      <p>No payment history available.</p>
+      <ul>
+        {% for f in fees %}
+          <li>
+            <strong>{{ f.title }}</strong> — 
+            ₹{{ f.amount }} — 
+            Due: {{ f.due_date }} — 
+            Status: <span class="badge {% if f.status == 'Pending' %}bg-warning{% elif f.status == 'Paid' %}bg-success{% else %}bg-secondary{% endif %}">{{ f.status }}</span>
+          </li>
+        {% else %}
+          <li>No fees assigned.</li>
+        {% endfor %}
+      </ul>
     </div>
   </div>
 </div>
@@ -284,8 +361,28 @@ body {
   <div class="card">
     <div class="card-header"><strong>Messages</strong></div>
     <div class="card-body">
-      <textarea class="form-control" rows="4" placeholder="Type your message..."></textarea>
-      <button class="btn btn-success mt-2">Send</button>
+      <div id="chat-box" class="chat-box mb-2">
+        {% for m, sender_name, sender_role in messages %}
+          <div class="chat-msg {% if m.sender_id == current_user_id %}chat-sent{% endif %}">
+            <span class="{{ 'chat-student' if sender_role == 'student' else 'chat-teacher' }}">{{ sender_name }}:</span>
+            {{ m.text }}
+          </div>
+        {% else %}
+          <p class="text-muted">No messages yet.</p>
+        {% endfor %}
+      </div>
+      <div class="refresh-status">Auto-refreshing every 5 seconds...</div>
+
+      <form id="message-form" onsubmit="sendMessage(event)">
+        <select name="receiver_id" id="receiver_id" class="form-control mb-2" required>
+          <option value="" selected disabled>Select Teacher</option>
+          {% for t in teachers %}
+            <option value="{{ t.id }}">{{ t.username }}</option>
+          {% endfor %}
+        </select>
+        <textarea name="message" class="form-control" rows="4" placeholder="Type your message..." required></textarea>
+        <button type="submit" class="btn btn-success mt-2">Send</button>
+      </form>
     </div>
   </div>
 </div>
@@ -294,12 +391,100 @@ body {
 
 <!-- ================= SCRIPT ================= -->
 <script>
+const current_user_id = {{ current_user_id }};
+
 function showSection(id) {
   document.querySelectorAll('.main > div[id]').forEach(div => {
     div.classList.add('hidden');
   });
   document.getElementById(id).classList.remove('hidden');
 }
+
+// Send message via AJAX
+function sendMessage(event) {
+  event.preventDefault();
+  const form = document.getElementById('message-form');
+  const receiverId = document.getElementById('receiver_id').value;
+  
+  // Validate receiver_id
+  if (!receiverId || receiverId === '') {
+    alert('Please select a teacher to send the message to.');
+    return;
+  }
+  
+  // Validate current_user_id doesn't match receiver_id
+  if (parseInt(receiverId) === current_user_id) {
+    alert('You cannot send a message to yourself.');
+    return;
+  }
+  
+  const formData = new FormData(form);
+  
+  fetch('/send-message', {
+    method: 'POST',
+    body: formData
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      form.reset();
+      refreshMessages(); // Refresh messages immediately after sending
+    }
+  })
+  .catch(err => console.log('Error sending message:', err));
+}
+
+// Auto-refresh messages every 5 seconds
+function refreshMessages() {
+  fetch('/api/messages')
+    .then(response => response.json())
+    .then(messages => {
+      const chatBox = document.getElementById('chat-box');
+      if (!chatBox) return;
+      
+      // Build HTML for messages
+      let html = '';
+      if (messages.length === 0) {
+        html = '<p class="text-muted">No messages yet.</p>';
+      } else {
+        messages.forEach(msg => {
+          const senderClass = msg.sender_role === 'student' ? 'chat-student' : 'chat-teacher';
+          const sentClass = msg.is_sent ? 'chat-sent' : '';
+          html += `<div class="chat-msg ${sentClass}">
+            <span class="${senderClass}">${msg.sender_name}:</span>
+            ${msg.text}
+          </div>`;
+        });
+      }
+      
+      chatBox.innerHTML = html;
+      // Auto-scroll to bottom
+      chatBox.scrollTop = chatBox.scrollHeight;
+    })
+    .catch(err => console.log('Error refreshing messages:', err));
+}
+
+// Refresh messages when on messages section
+window.onload = function () {
+  const section = window.location.hash.replace('#', '') || 'profile';
+  showSection(section);
+  
+  // Set interval for auto-refresh
+  setInterval(function() {
+    if (!document.getElementById('messages').classList.contains('hidden')) {
+      refreshMessages();
+    }
+  }, 5000);
+};
+
+// Refresh when switching to messages section
+const originalShowSection = showSection;
+showSection = function(id) {
+  originalShowSection(id);
+  if (id === 'messages') {
+    refreshMessages(); // Refresh immediately when switching to messages
+  }
+};
 </script>
 
 </body>
