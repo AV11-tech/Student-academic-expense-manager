@@ -90,6 +90,7 @@ body {
   <a onclick="showSection('courses')">📚 Courses</a>
   <a onclick="showSection('assignments')">📝 Assignments</a>
   <a onclick="showSection('grading')">✅ Assignment Grading</a>
+  <a onclick="showSection('notices')">📢 Notices</a>
   <a onclick="showSection('messages')">💬 Messages</a>
   <a onclick="showSection('fees')">💰 Fees</a>
   <a onclick="showSection('posted')">📂 Posted Data</a>
@@ -257,6 +258,37 @@ body {
 </div>
 </div>
 
+<!-- NOTICES -->
+<div id="notices" class="hidden">
+<div class="card">
+  <div class="card-header"><strong>Post Notice</strong></div>
+  <div class="card-body">
+    <form method="POST" action="/add-notice" enctype="multipart/form-data">
+      <textarea name="message" class="form-control mb-2" placeholder="Write your notice here..." rows="4" required></textarea>
+      <input type="file" name="file" class="form-control mb-2">
+      <button class="btn btn-primary">Post Notice</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Posted Notices</strong></div>
+  <div class="card-body">
+    {% for notice, teacher_name in notices %}
+      <div class="border p-3 mb-3">
+        <strong>{{ teacher_name }}</strong><br>
+        <p>{{ notice.message }}</p>
+        {% if notice.file %}
+          <a href="{{ url_for('static', filename='uploads/' ~ notice.file) }}" target="_blank">📎 Attachment</a>
+        {% endif %}
+      </div>
+    {% else %}
+      <p>No notices posted yet.</p>
+    {% endfor %}
+  </div>
+</div>
+</div>
+
 <!-- MESSAGES -->
 <div id="messages" class="hidden">
 <div class="card">
@@ -297,7 +329,7 @@ body {
 <div class="card">
   <div class="card-header"><strong>Post Fees</strong></div>
   <div class="card-body">
-    <form method="POST" action="/add-fee" class="row g-2">
+    <form method="POST" action="/fee" class="row g-2">
       <div class="col-md-3"><input name="title" class="form-control" placeholder="Title" required></div>
       <div class="col-md-2"><input name="amount" type="number" class="form-control" placeholder="Amount" required></div>
       <div class="col-md-3"><input type="date" name="due_date" class="form-control" required></div>
@@ -388,35 +420,69 @@ function showSection(id) {
 // Send message via AJAX
 function sendMessage(event) {
   event.preventDefault();
-  const form = document.getElementById('message-form');
-  const receiverId = document.getElementById('receiver_id').value;
-  
-  // Validate receiver_id
-  if (!receiverId || receiverId === '') {
-    alert('Please select a student to send the message to.');
-    return;
-  }
-  
-  // Validate current_user_id doesn't match receiver_id
-  if (parseInt(receiverId) === current_user_id) {
-    alert('You cannot send a message to yourself.');
-    return;
-  }
-  
-  const formData = new FormData(form);
-  
-  fetch('/send-message', {
-    method: 'POST',
-    body: formData
-  })
-  .then(response => response.json())
-  .then(data => {
-    if (data.success) {
-      form.reset();
-      refreshMessages(); // Refresh messages immediately after sending
+  try {
+    console.log('sendMessage called');
+    const form = document.getElementById('message-form');
+    if (!form) {
+      console.error('Message form not found');
+      return;
     }
-  })
-  .catch(err => console.log('Error sending message:', err));
+
+    const receiverEl = document.getElementById('receiver_id');
+    if (!receiverEl) {
+      console.error('Receiver select not found');
+      return;
+    }
+
+    const receiverId = receiverEl.value;
+
+    // Validate receiver_id
+    if (!receiverId || receiverId === '') {
+      alert('Please select a student to send the message to.');
+      return;
+    }
+
+    // Validate current_user_id doesn't match receiver_id
+    if (parseInt(receiverId) === current_user_id) {
+      alert('You cannot send a message to yourself.');
+      return;
+    }
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+
+    const formData = new FormData(form);
+
+    fetch('/send-message', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: formData
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Network response was not ok: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(data => {
+      console.log('send-message response:', data);
+      if (data && data.success) {
+        form.reset();
+        refreshMessages(); // Refresh messages immediately after sending
+      } else {
+        alert((data && data.message) ? data.message : 'Failed to send message');
+      }
+    })
+    .catch(err => {
+      console.error('Error sending message:', err);
+      alert('Error sending message. See console for details.');
+    })
+    .finally(() => {
+      if (submitBtn) submitBtn.disabled = false;
+    });
+  } catch (e) {
+    console.error('sendMessage exception:', e);
+  }
 }
 
 // Auto-refresh messages every 5 seconds

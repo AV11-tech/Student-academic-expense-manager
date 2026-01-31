@@ -55,6 +55,7 @@ class Notice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     message = db.Column(db.Text)
     file = db.Column(db.String(200))
+    teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 
 class Fee(db.Model):
@@ -243,7 +244,7 @@ def teacher_dashboard():
         courses=Course.query.all(),
         attendance=Attendance.query.all(),
         scores=Score.query.all(),
-        notices=Notice.query.all(),
+        notices=db.session.query(Notice, User.username.label('teacher_name')).outerjoin(User, Notice.teacher_id == User.id).all(),
         fees=Fee.query.all(),
         assignments=Assignment.query.all(),
         submissions=submissions,
@@ -291,6 +292,30 @@ def add_course():
     db.session.commit()
     flash('Course added successfully!', 'success')
     return redirect(url_for('teacher_dashboard') + '#courses')
+
+
+@app.route('/add-notice', methods=['POST'])
+@login_required
+def add_notice():
+    if current_user.role != 'teacher':
+        return "Access denied"
+    
+    filename = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file.filename != '':
+            filename = secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+    
+    notice = Notice(
+        message=request.form['message'],
+        file=filename,
+        teacher_id=current_user.id
+    )
+    db.session.add(notice)
+    db.session.commit()
+    flash('Notice posted successfully!', 'success')
+    return redirect(url_for('teacher_dashboard') + '#notices')
 
 
 @app.route('/fee', methods=['POST'])
